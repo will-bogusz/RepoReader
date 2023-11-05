@@ -1,7 +1,16 @@
 import subprocess
 import os
+from langchain.chat_models import ChatOpenAI
+from langchain.schema import (
+    SystemMessage,
+    HumanMessage,
+    AIMessage
+)
 
-def clone_repo(git_url, local_path):
+# method for downloading a github repository to a local file system
+def clone_repo(git_url):
+
+    base_local_dir = "C:/Users/wbogu/Temp"
     # Extract the repo name from the URL to use as the directory name
     repo_name = git_url.strip('/').rstrip('.git').split('/')[-1]
 
@@ -27,12 +36,15 @@ def clone_repo(git_url, local_path):
     except Exception as e:
         print(f'Something went wrong: {e}')
 
-# Input URL and local path
-repo_url = input('Enter the GitHub repository URL: ')
+# caller for the repo downloader, requests a url from the user that will be downloaded
+def begin_request():  
+    # Input URL and local path
+    repo_url = input('Enter the GitHub repository URL: ')
 
-# Define the base local directory where you have write permissions, without the repo name
-# Example: "C:/Users/wbogu/Temp" or any other desired base directory
-base_local_dir = "C:/Users/wbogu/Temp"
+    # Define the base local directory where you have write permissions, without the repo name
+    base_local_dir = "C:/Users/wbogu/Temp"
 
-# Clone the repository
-clone_repo(repo_url, base_local_dir)
+    # Clone the repository
+    clone_repo(repo_url)
+
+
