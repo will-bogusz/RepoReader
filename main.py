@@ -13,33 +13,40 @@ import uuid
 import chromadb
 from chromadb.config import Settings
 import openai
+import shutil
 
 from repo_explorer import directory_explorer_app
 from calculate_costs import calculate_cost_from_selection
 
 # method for downloading a github repository to a local file system
 def clone_repo(git_url):
-
-    local_path = "C:/Users/wbogu/Temp"
-    # Extract the repo name from the URL to use as the directory name
+    local_path = "C:/Users/wbogu/Temp/Repositories"
     repo_name = git_url.strip('/').rstrip('.git').split('/')[-1]
+    full_local_path = os.path.join(local_path, repo_name)
 
-    # Complete local path where the repo will be cloned
-    full_local_path = local_path + "/" + repo_name
-
-    # Check if the directory already exists
     if os.path.isdir(full_local_path):
         print(f"Repository already exists locally at '{full_local_path}'")
         return full_local_path
 
-    # Ensure the base local_path exists (not the full_local_path since git will create the repo_name dir)
     if not os.path.exists(local_path):
         os.makedirs(local_path)
 
-    # Execute git clone command
     try:
         subprocess.run(['git', 'clone', git_url, full_local_path], check=True)
         print(f'Repository cloned successfully to {full_local_path}')
+
+        # Remove .git, .gitignore, and .github files/folders after cloning
+        git_dir = os.path.join(full_local_path, '.git')
+        gitignore_file = os.path.join(full_local_path, '.gitignore')
+        github_dir =os.path.join(full_local_path, '.github')
+
+        if os.path.exists(git_dir):
+            shutil.rmtree(git_dir)
+        if os.path.exists(github_dir):
+            shutil.rmtree(github_dir)
+        if os.path.exists(gitignore_file):
+            os.remove(gitignore_file)
+
         return full_local_path
     except subprocess.CalledProcessError as e:
         print(f'An error occurred while cloning the repository: {e}')

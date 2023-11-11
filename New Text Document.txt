@@ -1,2 +1,0 @@
-openai.txt
-openrouter.txt
