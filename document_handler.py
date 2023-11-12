@@ -16,6 +16,7 @@ import time
 from utils import get_working_collection, call_with_timeout
 from chat_handler import get_chunk_classification
 import chardet
+import PyPDF2
 
 COST_PER_TOKEN = 0.0001 / 1000  # $0.0001 per 1K tokens
 MODEL_NAME = 'gpt-3.5-turbo'
@@ -33,7 +34,8 @@ def set_permissions_recursive(path):
 
 def is_text_file(file_path):
     try:
-        with open(file_path, 'r', encoding='utf-8') as file:
+        encoding = get_file_encoding(file_path) or 'utf-8'
+        with open(file_path, 'r', encoding=encoding) as file:
             file.read()
         return True
     except UnicodeDecodeError:
@@ -43,7 +45,9 @@ def clean_cloned_directory(directory_path):
     for root, dirs, files in os.walk(directory_path):
         for file in files:
             file_path = os.path.normpath(os.path.join(root, file))
-            if not is_text_file(file_path):
+            file_extension = os.path.splitext(file_path)[1].lower()
+
+            if file_extension != '.pdf' and not is_text_file(file_path):
                 print(f"Removing file: {file_path}")
                 os.remove(file_path)
 
@@ -241,35 +245,53 @@ def store_documents(docs):
             'translation': None
         }
 
-        encoding = get_file_encoding(full_path) or 'utf-8'
-        with open(full_path, 'r', encoding=encoding) as f:
-            content = f.read()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=100, length_function=len)
-            chunks = text_splitter.split_text(content)
-            for chunk in chunks:
-                if file_type == 'Source Code':
+        file_extension = os.path.splitext(full_path)[1].lower()
+        if file_extension == '.pdf':
+            try:
+                with open(full_path, 'rb') as f:
+                    pdf_reader = PyPDF2.PdfReader(f)
+                    pdf_text = []
+                    for page_num in range(len(pdf_reader.pages)):
+                        page = pdf_reader.pages[page_num]
+                        pdf_text.append(page.extract_text())
+                    content = ' '.join(pdf_text)
+            except Exception as e:
+                print(f"Error reading PDF file {full_path}: {e}")
+                continue
+        else:
+            encoding = get_file_encoding(full_path) or 'utf-8'
+            try:
+                with open(full_path, 'r', encoding=encoding) as f:
+                    content = f.read()
+            except Exception as e:
+                print(f"Error reading file {full_path}: {e}")
+                continue
+
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=100, length_function=len)
+        chunks = text_splitter.split_text(content)
+        for chunk in chunks:
+            doc_metadata = metadata
+            if file_type == 'Source Code':
+                translation, error = call_with_timeout(get_chunk_classification, [chunk, metadata], 30)
+                if error:
+                    print(f"Error or timeout on first try translating: {error}. Retrying...")
                     translation, error = call_with_timeout(get_chunk_classification, [chunk, metadata], 30)
                     if error:
-                        print(f"Error or timeout on first try translating: {error}. Retrying...")
-                        translation, error = call_with_timeout(get_chunk_classification, [chunk, metadata], 30)
-                        if error:
-                            print(f"Error or timeout on second try translating: {error}. Using default behavior.")
-                            print(f"Failed to translate a document for: {metadata['filename']}")
-                            translation = None
-                    
-                    if translation:
-                        doc_metadata = {
-                            **metadata,
-                            'translation': chunk
-                        }
-                        chunk = translation
-                    else:
-                        doc_metadata = metadata
-                    doc = Document(page_content=chunk, metadata=doc_metadata)
+                        print(f"Error or timeout on second try translating: {error}. Using default behavior.")
+                        print(f"Failed to translate a document for: {metadata['filename']}")
+                        translation = None
+                
+                if translation:
+                    doc_metadata = {
+                        **metadata,
+                        'translation': chunk
+                    }
+                    chunk = translation
 
-                    # Add document to collection
-                    add_document_to_collection(doc, collection)
-            
+            doc = Document(page_content=chunk, metadata=doc_metadata)
+
+            # Add document to collection
+            add_document_to_collection(doc, collection)
 
     total_embeddings = collection.count()
     print(f"Collection now has {total_embeddings} embeddings!")
@@ -310,6 +332,7 @@ def upload_documents():
 
         with open(file_path, "wb") as f:
             f.write(document.getbuffer())
+        st.success("File successfully uploaded!")
 
 def count_tokens(text):
     encoding = tiktoken.encoding_for_model(MODEL_NAME)
@@ -328,22 +351,46 @@ def calculate_cost_from_selection(selected_files, base_path):
 
     if selected_files:
         for file_path in selected_files:
+            file_extension = os.path.splitext(file_path)[1].lower()
             try:
-                encoding = get_file_encoding(file_path) or 'utf-8'
-                with open(file_path, 'r', encoding=encoding) as f:
-                    documents_content.append(f.read())
-                    file_count += 1
+                if file_extension == '.pdf':
+                    # Read from PDF file
+                    with open(file_path, 'rb') as f:
+                        pdf_reader = PyPDF2.PdfReader(f)
+                        pdf_text = []
+                        for page_num in range(len(pdf_reader.pages)):
+                            page = pdf_reader.pages[page_num]
+                            pdf_text.append(page.extract_text())
+                        documents_content.append(' '.join(pdf_text))
+                else:
+                    # Read from other file types using detected encoding
+                    encoding = get_file_encoding(file_path) or 'utf-8'
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        documents_content.append(f.read())
+                file_count += 1
             except Exception as e:
                 print(f"Error reading file {file_path}: {e}")
     else:
         for root, dirs, files in os.walk(base_path):
             for file in files:
                 file_path = os.path.join(root, file)
+                file_extension = os.path.splitext(file_path)[1].lower()
                 try:
-                    encoding = get_file_encoding(file_path) or 'utf-8'
-                    with open(file_path, 'r', encoding=encoding) as f:
-                        documents_content.append(f.read())
-                        file_count += 1
+                    if file_extension == '.pdf':
+                        # Read from PDF file
+                        with open(file_path, 'rb') as f:
+                            pdf_reader = PyPDF2.PdfReader(f)
+                            pdf_text = []
+                            for page_num in range(len(pdf_reader.pages)):
+                                page = pdf_reader.pages[page_num]
+                                pdf_text.append(page.extract_text())
+                            documents_content.append(' '.join(pdf_text))
+                    else:
+                        # Read from other file types using detected encoding
+                        encoding = get_file_encoding(file_path) or 'utf-8'
+                        with open(file_path, 'r', encoding=encoding) as f:
+                            documents_content.append(f.read())
+                    file_count += 1
                 except Exception as e:
                     print(f"Error reading file {file_path}: {e}")
 

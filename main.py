@@ -30,16 +30,11 @@ def format_file_hierarchy(selected_files):
         file_hierarchy[repo_name][sub_path].append(filename)
     return file_hierarchy
 
-
-def main():
-    st.set_page_config(page_title="Ask your Codebase")
-    st.header("Ask your Codebase")
-
-    st.sidebar.header("Selected Files")
-    if 'selected_files' in st.session_state and st.session_state['selected_files']:
-        selected_files = st.session_state.get('selected_files', [])
+def display_selected_files(selected_files, title):
+    if selected_files:
         file_hierarchy = format_file_hierarchy(selected_files)
 
+        st.sidebar.markdown(f"**{title}**")
         for repo_name, subdirs in file_hierarchy.items():
             st.sidebar.markdown(f"**{repo_name}**")
             for subdir, files in subdirs.items():
@@ -50,15 +45,34 @@ def main():
                     st.sidebar.markdown(f"<li>{filename}</li>", unsafe_allow_html=True)
                 st.sidebar.markdown("</ul>", unsafe_allow_html=True)
     else:
-        st.sidebar.write("No files currently selected")
+        st.sidebar.write(f"No files currently selected for {title.lower()}")
 
 
-    explore_directories = st.button("Explore Directories")
+def main():
+    st.set_page_config(page_title="Ask your Codebase")
+    st.header("Ask your Codebase")
+
+    selected_files_embedding = st.session_state.get('selected_files', [])
+    display_selected_files(selected_files_embedding, "Selected For Embedding")
+
+    # Display 'Selected For Context'
+    selected_files_context = st.session_state.get('selected_context_files', [])
+    display_selected_files(selected_files_context, "Selected For Context")
+
+
+    select_for_embedding = st.button("Select For Embedding")
+    select_for_context = st.button("Select For Context")
+
     calculate_cost_btn = st.button("Calculate Cost")
     embed_documents_btn = st.button("Embed Documents")
 
-    if explore_directories:
+    if select_for_embedding:
         st.session_state['explore_directory'] = True
+        st.session_state['directory_target'] = 'selected_files'
+
+    if select_for_context:
+        st.session_state['explore_directory'] = True
+        st.session_state['directory_target'] = 'selected_context_files'
 
     base = "C:\\Users\\wbogu\\Temp\\"
     selected_files = st.session_state.get('selected_files', [])
@@ -79,7 +93,7 @@ def main():
             total_cost, file_count = calculate_cost_from_selection(selected_files, base)
             if total_cost is not None and file_count > 0:
                 st.session_state['confirm_embed_all'] = True
-                st.success(f"Total cost to embed all documents: ~${total_cost:.3f}")
+                st.success(f"Total cost to embed all {file_count} documents: ~${total_cost:.3f}")
 
     if 'confirm_embed_all' in st.session_state and st.session_state['confirm_embed_all']:
         if st.button("Confirm"):
@@ -104,8 +118,9 @@ def main():
         if show_conversation_box:
             begin_conversation()
 
-    if st.session_state.get('explore_directory', False):
-        directory_explorer_app()
+    if 'explore_directory' in st.session_state and st.session_state['explore_directory']:
+        directory_target = st.session_state.get('directory_target', 'selected_files')
+        directory_explorer_app(directory_target)
 
 if __name__ == '__main__':
     main()

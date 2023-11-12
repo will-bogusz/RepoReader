@@ -36,18 +36,16 @@ def get_selected_files():
     return selected_files
 
 
-def directory_explorer_app():
+def directory_explorer_app(target_state='selected_files'):
     directory_tree = traverse_directories("C:\\Users\\wbogu\\Temp")
     render_tree(directory_tree)
     
-    # Display the "Done" button
     if st.button("Done"):
         selected_files = get_selected_files()
-        st.session_state['selected_files'] = selected_files
+        st.session_state[target_state] = selected_files
         st.session_state['explore_directory'] = False
-        # Optionally, display the selected files or handle them as needed
-        print("Selected Files:" + str(selected_files))
         st.rerun()
+
 
 
 # This part of the code will now only be executed when the directory explorer is active
