@@ -31,6 +31,45 @@ def get_model_response(query):
 
     return response_content["content"]
 
+def get_chunk_classification(query):
+    openai.api_base = "https://openrouter.ai/api/v1"
+    openai.api_key_path = "openrouter.txt"
+
+    augmented_prompt = f"""Translate the following code snippet into a user-friendly description. The description should be structured to facilitate keyword searches commonly used by someone trying to understand or locate specific functionalities within a codebase. Consider the following objectives:
+
+        1. Clearly identify and name each significant component (function, method, class) in the code.
+        2. Explain the purpose and functionality of these components in simple terms.
+        3. Use common programming terminology that users might employ in their queries, such as "function", "method", "class", "return value", "parameter", "loop", etc.
+        4. Highlight any specific tasks or operations the code performs, which users might search for, like "sorting a list", "calculating a sum", "handling user input", etc.
+        5. If possible, relate the code to typical programming problems or scenarios where such a code snippet would be relevant.
+
+        Remember, the goal is to make the code snippet's functionality and role within a larger codebase easily discoverable through search queries. 
+
+        Snippet:
+        {query}
+    """
+
+    messages = [
+        {"role": "system", "content": "You are a virtual knowledge agent who is provided snippets of data from various files. You attempt to fulfill queries based on provided context."},
+        {"role": "user", "content": augmented_prompt}
+    ]
+
+    response = openai.ChatCompletion.create(
+        #model = "",
+        model="openai/gpt-3.5-turbo-1106",
+        messages=messages,
+        headers={
+            "HTTP-Referer": "http://bogusz.co",
+        },
+    )
+
+    response_content = response.choices[0].message
+
+    openai.api_base = "https://api.openai.com/v1"
+    openai.api_key_path = "openai.txt"
+
+    return response_content["content"]
+
 def inject_context(query):
     collection = get_working_collection()
 

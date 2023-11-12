@@ -29,10 +29,9 @@ def format_file_hierarchy(selected_files):
     for file_path in selected_files:
         parts = file_path.split(os.sep)
         repo_name = parts[0]
-        sub_path = os.sep.join(parts[1:-1])  # Get the subdirectory path
+        sub_path = os.sep.join(parts[1:-1])
         filename = parts[-1]
 
-        # Initialize dictionary structure
         if repo_name not in file_hierarchy:
             file_hierarchy[repo_name] = {}
         if sub_path not in file_hierarchy[repo_name]:
@@ -85,9 +84,8 @@ def main():
 
     if embed_documents_btn:
         if selected_files:
-            store_repo_documents(selected_files, base)  # Assuming this function takes a list of file paths
+            store_documents(selected_files)
         else:
-            # Confirm embedding all documents
             total_cost, file_count = calculate_cost_from_selection(selected_files, base)
             if total_cost is not None and file_count > 0:
                 st.session_state['confirm_embed_all'] = True
@@ -95,7 +93,7 @@ def main():
 
     if 'confirm_embed_all' in st.session_state and st.session_state['confirm_embed_all']:
         if st.button("Confirm"):
-            store_repo_documents(selected_files, base_path=base)
+            store_documents(selected_files)
             st.session_state['confirm_embed_all'] = False
         if st.button("Cancel"):
             st.session_state['confirm_embed_all'] = False

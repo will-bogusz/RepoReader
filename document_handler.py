@@ -7,12 +7,14 @@ import uuid
 import streamlit as st
 import chromadb
 from langchain.document_loaders.generic import GenericLoader
+from langchain.document_loaders import Document
 from langchain.document_loaders.parsers import LanguageParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter, Language
 from chromadb.utils import embedding_functions
 import openai
 import time
 from utils import get_working_collection
+from chat_handler import get_chunk_classification
 import chardet
 
 COST_PER_TOKEN = 0.0001 / 1000  # $0.0001 per 1K tokens
@@ -146,82 +148,147 @@ def embed_text(text):
 
     return embedding
 
+def get_language_from_extension(file_path):
+    _, ext = os.path.splitext(file_path)
+    language_mapping = {
+        '.py': ('Python', 'Source Code'),
+        '.js': ('JavaScript', 'Source Code'),
+        '.java': ('Java', 'Source Code'),
+        '.c': ('C', 'Source Code'),
+        '.cpp': ('C++', 'Source Code'),
+        '.cs': ('C#', 'Source Code'),
+        '.ts': ('TypeScript', 'Source Code'),
+        '.php': ('PHP', 'Source Code'),
+        '.rb': ('Ruby', 'Source Code'),
+        '.go': ('Go', 'Source Code'),
+        '.swift': ('Swift', 'Source Code'),
+        '.kt': ('Kotlin', 'Source Code'),
+        '.rs': ('Rust', 'Source Code'),
+        '.lua': ('Lua', 'Source Code'),
+        '.groovy': ('Groovy', 'Source Code'),
+        '.r': ('R', 'Source Code'),
+        '.sh': ('Shell', 'Source Code'),
+        '.bat': ('Batch', 'Source Code'),
+        '.ps1': ('PowerShell', 'Source Code'),
+        '.pl': ('Perl', 'Source Code'),
+        '.scala': ('Scala', 'Source Code'),
+        '.h': ('C/C++ Header', 'Source Code'),
+        '.hpp': ('C++ Header', 'Source Code'),
+        '.html': ('HTML', 'Source Code'),
+        '.css': ('CSS', 'Source Code'),
+        '.xml': ('XML', 'Source Code'),
+        '.json': ('JSON', 'Data/Text'),
+        '.yaml': ('YAML', 'Configuration'),
+        '.yml': ('YAML', 'Configuration'),
+        '.md': ('Markdown', 'Data/Text'),
+        '.csv': ('CSV', 'Data/Text'),
+        '.txt': ('Text', 'Data/Text'),
+        '.sql': ('SQL', 'Source Code'),
+        '.dart': ('Dart', 'Source Code'),
+        '.f': ('Fortran', 'Source Code'),
+        '.vb': ('Visual Basic', 'Source Code'),
+        '.jsx': ('JSX', 'Source Code'),
+        '.tsx': ('TSX', 'Source Code'),
+        '.ini': ('INI', 'Configuration'),
+        '.toml': ('TOML', 'Configuration'),
+    }
+
+    return language_mapping.get(ext.lower(), ('Text', 'Data/Text'))
+
+
+def clean_path(path, base_path):
+    return path.replace(base_path, '', 1).lstrip('\\/')
+
+def get_source_from_path(path):
+    parts = path.split(os.sep)
+    if 'Repositories' in parts:
+        return parts[parts.index('Repositories') + 1]  # Repository name
+    elif 'Uploaded' in parts:
+        return 'Uploaded'
+    return 'Unknown'
+
 def store_documents(docs):
-    print(docs)
-    return
-    loader = GenericLoader.from_filesystem(
-        "placeholder",
-        glob="**/*",
-        suffixes=[".py", ".js"],
-        parser=LanguageParser()
-    )
-    docs = loader.load()
+    documents = []  # Store all processed documents
+    base_path = "C:\\Users\\wbogu\\Temp\\"
 
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size = 1000,
-        chunk_overlap  = 100,
-        length_function = len,
-        is_separator_regex = False,
-    )
+    for doc_path in docs:
+        full_path = os.path.normpath(doc_path)
+        if not os.path.exists(full_path):
+            print(f"Error: File not found {full_path}")
+            continue
 
-    python_splitter = RecursiveCharacterTextSplitter.from_language(
-        language=Language.PYTHON, chunk_size=150, chunk_overlap=0
-    )
+        file_name = os.path.basename(full_path)
+        cleaned_path = clean_path(full_path, base_path)
+        language, file_type = get_language_from_extension(full_path)
+        source = get_source_from_path(full_path)
 
-    # clean up the data before it is added, we will be computing embeddings before adding them to the db
-    # metadata will also be separated for entry
+        metadata = {
+            'filename': file_name,
+            'filepath': cleaned_path,
+            'language': language,
+            'source': source,
+            'type': file_type,
+            'translation': None
+        }
 
-    # if it was a valid source file, clean up the metadata entry
-
-    path_prefix = "C:\\Users\\wbogu\\Temp\\"
-
-    uuids = []
-    metadata = []
-    embeddings = []
-    text = []
-    for doc in docs:
-        text.append(doc.page_content)
-        # create a uuid identifier to tag the document in chroma
-        uuids.append(str(uuid.uuid4()))
-        # handle metadata
-        curr_meta = doc.metadata
-        # check if it contains anything
-        if curr_meta:
-            lang = curr_meta.get('language')
-            path = curr_meta.get('source')
-            print(curr_meta)
-            if lang:
-                curr_meta['language'] = lang.value
-            if path:
-                # remove the download path prefix from the source so that it can be better interpretted by the model 
-                cleaned = path.replace(path_prefix, "", 1)
-                print(path_prefix)
-                print(cleaned)
-                curr_meta['source'] = cleaned
-        metadata.append(stringify_dictionary(curr_meta))
-
-        # create the embedding for the chunk
-        embed = embed_text(doc.page_content)
-
-        #print(embed)
-
-        final_embedding = embed.data[0]['embedding']
-        #print(final_embedding)
-        embeddings.append(final_embedding)
+        if language in ['Python', 'JavaScript']:
+            loader = GenericLoader.from_filesystem(
+                os.path.dirname(full_path),
+                glob=os.path.basename(full_path),
+                parser=LanguageParser()
+            )
+            file_docs = loader.load()
+            for file_doc in file_docs:
+                original_content = file_doc.page_content
+                translation = get_chunk_classification(original_content)
+                file_doc.metadata = {
+                    **metadata,
+                    'translation': original_content
+                }
+                file_doc.page_content = translation
+                documents.append(file_doc)
+        else:
+            encoding = get_file_encoding(full_path) or 'utf-8'
+            with open(full_path, 'r', encoding=encoding) as f:
+                content = f.read()
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100, length_function=len)
+                chunks = text_splitter.split(content)
+                for chunk in chunks:
+                    if file_type == 'Source Code':
+                        translation = get_chunk_classification(chunk)
+                        doc_metadata = {
+                            **metadata,
+                            'translation': chunk
+                        }
+                        chunk = translation
+                    else:
+                        doc_metadata = metadata
+                    doc = Document(page_content=chunk, metadata=doc_metadata)
+                    documents.append(doc)
 
 
-    collection = get_working_collection()
+    # Final processing
+    for doc in documents:
+        doc.metadata = stringify_dictionary(doc.metadata)
+        doc_id = str(uuid.uuid4())
+        embedding = embed_text(doc.page_content)
 
-    total_embeddings = collection.count()
-    print(f"Collection currently has {total_embeddings} embeddings!")
+    batch_size = 10
+    for i in range(0, len(documents), batch_size):
+        batch = documents[i:i + batch_size]
 
+        text_batch = [doc.page_content for doc in batch]
+        metadata_batch = [stringify_dictionary(doc.metadata) for doc in batch]
+        uuids_batch = [str(uuid.uuid4()) for _ in batch]
+        embeddings_batch = [embed_text(doc.page_content) for doc in batch]
 
-    collection.add(
-        documents=text,
-        embeddings=embeddings,
-        metadatas=metadata,
-        ids=uuids
-    )
+        collection = get_working_collection()
+        collection.add(
+            documents=text_batch,
+            embeddings=embeddings_batch,
+            metadatas=metadata_batch,
+            ids=uuids_batch
+        )
 
     total_embeddings = collection.count()
     print(f"Collection now has {total_embeddings} embeddings!")
