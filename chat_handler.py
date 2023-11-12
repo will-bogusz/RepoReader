@@ -1,7 +1,23 @@
 import openai
 import streamlit as st
 from utils import get_current_conversation, get_working_collection
-from document_handler import embed_text
+
+def embed_text(text):
+    openai.api_base = "https://api.openai.com/v1"
+    openai.api_key_path = "openai.txt"
+    passed = False
+
+    for j in range(5):
+        try:
+            res = openai.Embedding.create(input=text, engine="text-embedding-ada-002")
+            passed = True
+        except openai.error.RateLimitError:
+            time.sleep(2**j)
+    if not passed:
+        raise RuntimeError("Failed to create embeddings.")
+    embedding = res['data'][0]['embedding']
+
+    return embedding
 
 def get_model_response(query):
     openai.api_base = "https://openrouter.ai/api/v1"
@@ -41,7 +57,7 @@ def get_chunk_classification(query):
         2. Explain the purpose and functionality of these components in simple terms.
         3. Use common programming terminology that users might employ in their queries, such as "function", "method", "class", "return value", "parameter", "loop", etc.
         4. Highlight any specific tasks or operations the code performs, which users might search for, like "sorting a list", "calculating a sum", "handling user input", etc.
-        5. If possible, relate the code to typical programming problems or scenarios where such a code snippet would be relevant.
+        5. Your translation should reflect the scale of the snippet, i.e. large snippets have more description, but a single line snippet evokes a single line translation
 
         Remember, the goal is to make the code snippet's functionality and role within a larger codebase easily discoverable through search queries. 
 
@@ -75,16 +91,12 @@ def inject_context(query):
 
     vector = embed_text(query)
 
-    # modify this later to include the metadata so that we can provide citations
     results = collection.query(
         query_embeddings=vector,
-        n_results=15,
+        n_results=5,
         include=["documents", "metadatas"]
     )
 
-    #print(results)
-
-    # get the text from the results, create a query header to assist model in differentiating sources of data
     structured_context = f"""
         **Query for Analysis:**
         {query}
@@ -97,8 +109,10 @@ def inject_context(query):
         """
 
     for i, (doc, meta) in enumerate(zip(results['documents'][0], results['metadatas'][0])):
-        structured_context += f"{i+1}. **[Source: {meta['source']}, Type: {meta['content_type']}, Language: {meta['language']}]**\n```\n{doc}\n```\n\n"
+        # Check if 'translation' metadata is available and suitable for use
+        content = meta.get('translation') if meta.get('translation') and len(meta['translation']) > 5 else doc
 
+        structured_context += f"{i+1}. **[Source: {meta['source']}, Type: {meta['type']}, Language: {meta['language']}, Filename: {meta['filename']}]**\n```\n{content}\n```\n\n"
 
     return structured_context
 

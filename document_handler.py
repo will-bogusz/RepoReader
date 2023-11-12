@@ -7,7 +7,7 @@ import uuid
 import streamlit as st
 import chromadb
 from langchain.document_loaders.generic import GenericLoader
-from langchain.document_loaders import Document
+from langchain.schema.document import Document
 from langchain.document_loaders.parsers import LanguageParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter, Language
 from chromadb.utils import embedding_functions
@@ -208,8 +208,16 @@ def get_source_from_path(path):
     return 'Unknown'
 
 def store_documents(docs):
-    documents = []  # Store all processed documents
     base_path = "C:\\Users\\wbogu\\Temp\\"
+
+    if not docs:
+        # Traverse the directories and subdirectories to get all file paths
+        for root, dirs, files in os.walk(base_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                docs.append(file_path)
+
+    collection = get_working_collection()
 
     for doc_path in docs:
         full_path = os.path.normpath(doc_path)
@@ -231,67 +239,42 @@ def store_documents(docs):
             'translation': None
         }
 
-        if language in ['Python', 'JavaScript']:
-            loader = GenericLoader.from_filesystem(
-                os.path.dirname(full_path),
-                glob=os.path.basename(full_path),
-                parser=LanguageParser()
-            )
-            file_docs = loader.load()
-            for file_doc in file_docs:
-                original_content = file_doc.page_content
-                translation = get_chunk_classification(original_content)
-                file_doc.metadata = {
-                    **metadata,
-                    'translation': original_content
-                }
-                file_doc.page_content = translation
-                documents.append(file_doc)
-        else:
-            encoding = get_file_encoding(full_path) or 'utf-8'
-            with open(full_path, 'r', encoding=encoding) as f:
-                content = f.read()
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100, length_function=len)
-                chunks = text_splitter.split(content)
-                for chunk in chunks:
-                    if file_type == 'Source Code':
-                        translation = get_chunk_classification(chunk)
-                        doc_metadata = {
-                            **metadata,
-                            'translation': chunk
-                        }
-                        chunk = translation
-                    else:
-                        doc_metadata = metadata
-                    doc = Document(page_content=chunk, metadata=doc_metadata)
-                    documents.append(doc)
+        encoding = get_file_encoding(full_path) or 'utf-8'
+        with open(full_path, 'r', encoding=encoding) as f:
+            content = f.read()
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=200, length_function=len)
+            chunks = text_splitter.split_text(content)
+            for chunk in chunks:
+                if file_type == 'Source Code':
+                    translation = get_chunk_classification(chunk)
+                    doc_metadata = {
+                        **metadata,
+                        'translation': chunk
+                    }
+                    chunk = translation
+                else:
+                    doc_metadata = metadata
+                doc = Document(page_content=chunk, metadata=doc_metadata)
 
-
-    # Final processing
-    for doc in documents:
-        doc.metadata = stringify_dictionary(doc.metadata)
-        doc_id = str(uuid.uuid4())
-        embedding = embed_text(doc.page_content)
-
-    batch_size = 10
-    for i in range(0, len(documents), batch_size):
-        batch = documents[i:i + batch_size]
-
-        text_batch = [doc.page_content for doc in batch]
-        metadata_batch = [stringify_dictionary(doc.metadata) for doc in batch]
-        uuids_batch = [str(uuid.uuid4()) for _ in batch]
-        embeddings_batch = [embed_text(doc.page_content) for doc in batch]
-
-        collection = get_working_collection()
-        collection.add(
-            documents=text_batch,
-            embeddings=embeddings_batch,
-            metadatas=metadata_batch,
-            ids=uuids_batch
-        )
+                # Add document to collection
+                add_document_to_collection(doc, collection)
+            
 
     total_embeddings = collection.count()
     print(f"Collection now has {total_embeddings} embeddings!")
+
+
+def add_document_to_collection(document, collection):
+    doc_id = str(uuid.uuid4())
+    embedding = embed_text(document.page_content)
+    document.metadata = stringify_dictionary(document.metadata)
+    collection.add(
+        documents=[document.page_content],
+        embeddings=[embedding],
+        metadatas=[document.metadata],
+        ids=[doc_id]
+    )
+    print(f"Added Document: {doc_id}, Metadata: {document.metadata}")
 
 # helper to clean up metadata
 def stringify_dictionary(input_dict):
@@ -299,10 +282,14 @@ def stringify_dictionary(input_dict):
 
 def upload_documents():
     valid_data_documents = ["doc", "txt", "md", "pdf", "log", "py", "js"]
+    base_path = "C:\\Users\\wbogu\\Temp\\Uploaded"
+
     document = st.file_uploader("Upload your data", type=valid_data_documents)
-    embed = st.button('Load Documents')
-    if document is not None and embed:
-        embed_document(document)
+    if document is not None:
+        file_path = os.path.join(base_path, document.name)
+
+        with open(file_path, "wb") as f:
+            f.write(document.getbuffer())
 
 def count_tokens(text):
     encoding = tiktoken.encoding_for_model(MODEL_NAME)
@@ -322,12 +309,12 @@ def calculate_cost_from_selection(selected_files, base_path):
     if selected_files:
         for file_path in selected_files:
             try:
-                encoding = get_file_encoding(full_path) or 'utf-8'
-                with open(full_path, 'r', encoding=encoding) as f:
+                encoding = get_file_encoding(file_path) or 'utf-8'
+                with open(file_path, 'r', encoding=encoding) as f:
                     documents_content.append(f.read())
                     file_count += 1
             except Exception as e:
-                print(f"Error reading file {full_path}: {e}")
+                print(f"Error reading file {file_path}: {e}")
     else:
         for root, dirs, files in os.walk(base_path):
             for file in files:

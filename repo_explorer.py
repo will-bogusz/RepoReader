@@ -31,6 +31,7 @@ def get_selected_files():
     for key, value in st.session_state.items():
         if value and "file:" in key:
             file_path = key.split("file:", 1)[1]
+            file_path = "C:\\Users\\wbogu\\Temp\\" + file_path
             selected_files.append(file_path)
     return selected_files
 
@@ -45,7 +46,7 @@ def directory_explorer_app():
         st.session_state['selected_files'] = selected_files
         st.session_state['explore_directory'] = False
         # Optionally, display the selected files or handle them as needed
-        st.write("Selected Files:", selected_files)
+        print("Selected Files:" + str(selected_files))
         st.rerun()
 
 

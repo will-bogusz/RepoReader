@@ -1,6 +1,7 @@
 import chromadb
 import streamlit as st
 import openai
+from chromadb.utils import embedding_functions
 
 def get_openrouter_key():
     if 'openrouter_key' not in st.session_state or st.session_state.openrouter_key is None:

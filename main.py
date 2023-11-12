@@ -1,17 +1,6 @@
-import subprocess
 import os
 import streamlit as st
 from dotenv import load_dotenv
-from langchain.text_splitter import (
-    RecursiveCharacterTextSplitter,
-    Language,
-)
-from langchain.document_loaders.generic import GenericLoader
-from langchain.document_loaders.parsers import LanguageParser
-from chromadb.utils import embedding_functions
-import uuid
-import chromadb
-from chromadb.config import Settings
 import openai
 import shutil
 import time
@@ -20,13 +9,14 @@ import stat
 
 import streamlit as st
 from document_handler import prompt_for_urls, upload_documents, store_documents, calculate_cost_from_selection
-from chat_handler import get_model_response
+from chat_handler import get_model_response, begin_conversation
 from repo_explorer import directory_explorer_app
 
 
 def format_file_hierarchy(selected_files):
     file_hierarchy = {}
     for file_path in selected_files:
+        file_path = file_path[len("C:\\Users\\wbogu\\Temp\\"):]
         parts = file_path.split(os.sep)
         repo_name = parts[0]
         sub_path = os.sep.join(parts[1:-1])
@@ -73,7 +63,7 @@ def main():
     base = "C:\\Users\\wbogu\\Temp\\"
     selected_files = st.session_state.get('selected_files', [])
 
-    if calculate_cost_btn:        
+    if calculate_cost_btn:
         total_cost, file_count = calculate_cost_from_selection(selected_files, base)
         if total_cost is not None and file_count > 0:
             st.success(f"Total cost of embedding {file_count} files: ~${total_cost:.3f}")
@@ -89,12 +79,13 @@ def main():
             total_cost, file_count = calculate_cost_from_selection(selected_files, base)
             if total_cost is not None and file_count > 0:
                 st.session_state['confirm_embed_all'] = True
-                st.write(f"Total cost to embed all documents: ~${total_cost:.3f}")
+                st.success(f"Total cost to embed all documents: ~${total_cost:.3f}")
 
     if 'confirm_embed_all' in st.session_state and st.session_state['confirm_embed_all']:
         if st.button("Confirm"):
-            store_documents(selected_files)
             st.session_state['confirm_embed_all'] = False
+            store_documents(selected_files)
+            st.rerun()
         if st.button("Cancel"):
             st.session_state['confirm_embed_all'] = False
             st.rerun()
