@@ -13,7 +13,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter, Language
 from chromadb.utils import embedding_functions
 import openai
 import time
-from utils import get_working_collection
+from utils import get_working_collection, call_with_timeout
 from chat_handler import get_chunk_classification
 import chardet
 
@@ -207,6 +207,8 @@ def get_source_from_path(path):
         return 'Uploaded'
     return 'Unknown'
 
+
+
 def store_documents(docs):
     base_path = "C:\\Users\\wbogu\\Temp\\"
 
@@ -242,22 +244,31 @@ def store_documents(docs):
         encoding = get_file_encoding(full_path) or 'utf-8'
         with open(full_path, 'r', encoding=encoding) as f:
             content = f.read()
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=200, length_function=len)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=100, length_function=len)
             chunks = text_splitter.split_text(content)
             for chunk in chunks:
                 if file_type == 'Source Code':
-                    translation = get_chunk_classification(chunk)
-                    doc_metadata = {
-                        **metadata,
-                        'translation': chunk
-                    }
-                    chunk = translation
-                else:
-                    doc_metadata = metadata
-                doc = Document(page_content=chunk, metadata=doc_metadata)
+                    translation, error = call_with_timeout(get_chunk_classification, [chunk, metadata], 30)
+                    if error:
+                        print(f"Error or timeout on first try translating: {error}. Retrying...")
+                        translation, error = call_with_timeout(get_chunk_classification, [chunk, metadata], 30)
+                        if error:
+                            print(f"Error or timeout on second try translating: {error}. Using default behavior.")
+                            print(f"Failed to translate a document for: {metadata['filename']}")
+                            translation = None
+                    
+                    if translation:
+                        doc_metadata = {
+                            **metadata,
+                            'translation': chunk
+                        }
+                        chunk = translation
+                    else:
+                        doc_metadata = metadata
+                    doc = Document(page_content=chunk, metadata=doc_metadata)
 
-                # Add document to collection
-                add_document_to_collection(doc, collection)
+                    # Add document to collection
+                    add_document_to_collection(doc, collection)
             
 
     total_embeddings = collection.count()
@@ -266,7 +277,16 @@ def store_documents(docs):
 
 def add_document_to_collection(document, collection):
     doc_id = str(uuid.uuid4())
-    embedding = embed_text(document.page_content)
+
+    embedding, error = call_with_timeout(embed_text, [document.page_content], 30)
+    if error:
+        print(f"Error or timeout on first try embedding: {error}. Retrying...")
+        embedding, error = call_with_timeout(embed_text, [document.page_content], 30)
+        if error:
+            print(f"Error or timeout on second try embedding: {error}. Using default behavior.")
+            print(f"Unable to add document, failed embedding: {doc_id} | {document.metadata['filename']}")
+            translation = None
+
     document.metadata = stringify_dictionary(document.metadata)
     collection.add(
         documents=[document.page_content],
@@ -274,7 +294,7 @@ def add_document_to_collection(document, collection):
         metadatas=[document.metadata],
         ids=[doc_id]
     )
-    print(f"Added Document: {doc_id}, Metadata: {document.metadata}")
+    print(f"Added Document: {doc_id} | {document.metadata['filename']}")
 
 # helper to clean up metadata
 def stringify_dictionary(input_dict):

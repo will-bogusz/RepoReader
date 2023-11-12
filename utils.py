@@ -2,6 +2,8 @@ import chromadb
 import streamlit as st
 import openai
 from chromadb.utils import embedding_functions
+import threading
+import cohere
 
 def get_openrouter_key():
     if 'openrouter_key' not in st.session_state or st.session_state.openrouter_key is None:
@@ -29,6 +31,19 @@ def get_working_collection():
         st.session_state.working_collection = client.get_or_create_collection(name="reporeader", embedding_function=ef)
     return st.session_state.working_collection
 
+def get_cohere_client():
+    if 'cohere_client' not in st.session_state or st.session_state.cohere_client is None:
+        key = get_cohere_key()
+        st.session_state.cohere_client = cohere.Client(key)
+    return st.session_state.cohere_client
+
+def get_cohere_key():
+    if 'cohere_key' not in st.session_state or st.session_state.cohere_key is None:
+        with open('cohere.txt', 'r') as ckey:
+            coherekey = ckey.read()
+        st.session_state.cohere_key = coherekey
+    return st.session_state.cohere_key
+
 def get_openai_key():
     if 'openai_key' not in st.session_state or st.session_state.openai_key is None:
         with open('openai.txt', 'r') as oaikey:
@@ -46,3 +61,20 @@ def get_embedding_function():
             model_name="text-embedding-ada-002"
         )
     return st.session_state.embedding_function
+
+def call_with_timeout(func, args, timeout):
+    result = [None]
+    exception = [None]
+
+    def target():
+        try:
+            result[0] = func(*args)
+        except Exception as e:
+            exception[0] = e
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        return None, "Timeout"
+    return result[0], exception[0]
