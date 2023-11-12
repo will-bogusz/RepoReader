@@ -78,3 +78,22 @@ def call_with_timeout(func, args, timeout):
     if thread.is_alive():
         return None, "Timeout"
     return result[0], exception[0]
+
+def create_meta_filter(paths):
+    base_path = "C:\\Users\\wbogu\\Temp\\"
+    length = len(base_path)
+    
+    if len(paths) == 1:
+        trimmed = paths[0][length:]
+        return {"filepath": {"$eq": trimmed}}
+    else:
+        or_conditions = []
+
+        for path in paths:
+            trimmed = path[length:]
+
+            condition = {"filepath": {"$eq": trimmed}}
+            or_conditions.append(condition)
+
+        filter_dict = {"$or": or_conditions}
+        return filter_dict

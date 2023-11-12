@@ -1,6 +1,6 @@
 import openai
 import streamlit as st
-from utils import get_current_conversation, get_working_collection, get_cohere_client, call_with_timeout
+from utils import get_current_conversation, get_working_collection, get_cohere_client, call_with_timeout, create_meta_filter
 import cohere
 
 def embed_text(text):
@@ -20,11 +20,16 @@ def embed_text(text):
 
     return embedding
 
-def get_model_response(query):
+def get_model_response(query, conversation):
     openai.api_base = "https://openrouter.ai/api/v1"
     openai.api_key_path = "openrouter.txt"
 
-    messages = get_current_conversation()
+    messages = [
+        {"role": "system", "content": "You are a virtual knowledge agent who is provided snippets of data from various files. You attempt to fulfill queries based on provided context whenever possible."}
+    ]
+
+    if conversation:
+        messages = get_current_conversation()
 
     prompt = {"role": "user", "content": query}
 
@@ -42,6 +47,9 @@ def get_model_response(query):
     response_content = response.choices[0].message
 
     messages.append(response_content)
+
+    if not conversation:
+        st.session_state.current_conversation = messages
 
     openai.api_base = "https://api.openai.com/v1"
     openai.api_key_path = "openai.txt"
@@ -102,26 +110,38 @@ def inject_context(query):
             print(f"Error or timeout on second try embedding query: {error}.")
             raise Exception("Unable to vectorize query, failed embedding")
 
-    results = collection.query(
-        query_embeddings=vector,
-        n_results=100,
-        include=["documents", "metadatas"]
-    )
+    selected_files_context = st.session_state.get('selected_context_files', [])
+    if selected_files_context:
+        meta_filter = create_meta_filter(selected_files_context)
+        print(meta_filter)
+        results = collection.query(
+            query_embeddings=vector,
+            n_results=200,
+            include=["documents", "metadatas"],
+            where=meta_filter
+        )
+    else:
+        results = collection.query(
+            query_embeddings=vector,
+            n_results=200,
+            include=["documents", "metadatas"]
+        )
 
-    # Prepare documents for reranking
-    documents_for_reranking = []
-    for doc, meta in zip(results['documents'][0], results['metadatas'][0]):
-        content = meta.get('translation') if meta.get('translation') and len(meta['translation']) > 5 else doc
-        documents_for_reranking.append({"text": content})
+    # Prepare documents for reranking using original document content
+    documents_for_reranking = [{'text': doc} for doc in results['documents'][0]]
 
     co = get_cohere_client()
+
+    # in case we return less than 15 embeddings
+    total_docs = len(documents_for_reranking)
+    top_n = min(total_docs, 15)
 
     # Complete rerank call
     reranked_results = co.rerank(
         query=query,
         documents=documents_for_reranking,
         model="rerank-english-v2.0",
-        top_n=10
+        top_n=top_n
     )
 
     structured_context = f"""
@@ -137,13 +157,12 @@ def inject_context(query):
 
     for rank in reranked_results.results:
         doc_index = rank.index
-        doc = documents_for_reranking[doc_index]["text"]
+        # Substitute translation metadata into document text if it exists
         meta = results['metadatas'][0][doc_index]
-        structured_context += f"{rank.index+1}. **[Source: {meta['source']}, Type: {meta['type']}, Language: {meta['language']}, Filename: {meta['filename']}]**\n```\n{doc}\n```\n\n"
+        content = meta.get('translation') if meta.get('translation') and len(meta['translation']) > 5 else documents_for_reranking[doc_index]['text']
+        structured_context += f"{rank.index+1}. **[Source: {meta['source']}, Type: {meta['type']}, Language: {meta['language']}, Filename: {meta['filename']}]**\n```\n{content}\n```\n\n"
 
     return structured_context
-
-
 
 def begin_conversation():
     user_question = st.text_input('Ask a question about your uploaded data:')
@@ -151,7 +170,8 @@ def begin_conversation():
     # will want to find a better way to display the conversation with a history
     if user_question:
         query = inject_context(user_question)
-        response = get_model_response(query)
+        # disabling conversational features for now, making them one off replies based on provided context
+        response = get_model_response(query, False)
 
         conversation = get_current_conversation()
 
