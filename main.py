@@ -11,6 +11,7 @@ import streamlit as st
 from document_handler import prompt_for_urls, upload_documents, store_documents, calculate_cost_from_selection
 from chat_handler import get_model_response, begin_conversation
 from repo_explorer import directory_explorer_app
+from utils import get_working_collection
 
 
 def format_file_hierarchy(selected_files):
@@ -47,7 +48,6 @@ def display_selected_files(selected_files, title):
     else:
         st.sidebar.write(f"No files currently selected for {title.lower()}")
 
-
 def main():
     st.set_page_config(page_title="Ask your Codebase")
     st.header("Ask your Codebase")
@@ -58,7 +58,6 @@ def main():
     # Display 'Selected For Context'
     selected_files_context = st.session_state.get('selected_context_files', [])
     display_selected_files(selected_files_context, "Selected For Context")
-
 
     select_for_embedding = st.button("Select For Embedding")
     select_for_context = st.button("Select For Context")
@@ -88,12 +87,14 @@ def main():
 
     if embed_documents_btn:
         if selected_files:
-            store_documents(selected_files)
+            #store_documents(selected_files)
+            st.error("Disabling in demo to prevent user error! Sorry!")
         else:
-            total_cost, file_count = calculate_cost_from_selection(selected_files, base)
-            if total_cost is not None and file_count > 0:
-                st.session_state['confirm_embed_all'] = True
-                st.success(f"Total cost to embed all {file_count} documents: ~${total_cost:.3f}")
+            st.error("Disabling in demo to prevent user error! Sorry!")
+            #total_cost, file_count = calculate_cost_from_selection(selected_files, base)
+            #if total_cost is not None and file_count > 0:
+            #    st.session_state['confirm_embed_all'] = True
+            #    st.success(f"Total cost to embed all {file_count} documents: ~${total_cost:.3f}")
 
     if 'confirm_embed_all' in st.session_state and st.session_state['confirm_embed_all']:
         if st.button("Confirm"):

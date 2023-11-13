@@ -13,10 +13,14 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter, Language
 from chromadb.utils import embedding_functions
 import openai
 import time
-from utils import get_working_collection, call_with_timeout
-from chat_handler import get_chunk_classification
+from utils import get_working_collection, call_with_timeout, get_openai_key
+from chat_handler import get_chunk_classification, call_with_timeout_translation, call_with_timeout_embed
 import chardet
 import PyPDF2
+import requests
+import json
+import threading
+import queue
 
 COST_PER_TOKEN = 0.0001 / 1000  # $0.0001 per 1K tokens
 MODEL_NAME = 'gpt-3.5-turbo'
@@ -135,21 +139,37 @@ def prompt_for_urls():
                 # Provide feedback for empty URL field
                 st.error("Please enter a URL.")
 
-def embed_text(text):
-    openai.api_base = "https://api.openai.com/v1"
-    openai.api_key_path = "openai.txt"
-    passed = False
+def embed_text(text, key):
+    api_url = "https://api.openai.com/v1/embeddings"
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "input": text,
+        "model": "text-embedding-ada-002",
+        "encoding_format": "float"
+    }
 
+    passed = False
     for j in range(5):
         try:
-            res = openai.Embedding.create(input=text, engine="text-embedding-ada-002")
-            passed = True
-        except openai.error.RateLimitError:
-            time.sleep(2**j)
+            response = requests.post(api_url, headers=headers, json=data)
+            if response.status_code == 200:
+                passed = True
+                break
+            elif response.status_code == 429:  # Rate limit error
+                time.sleep(2 ** j)
+            else:
+                break  # Break on other errors
+        except Exception as e:
+            print(f"Exception occurred: {e}")
+            break
+
     if not passed:
         raise RuntimeError("Failed to create embeddings.")
-    embedding = res['data'][0]['embedding']
-
+    
+    embedding = response.json()['data'][0]['embedding']
     return embedding
 
 def get_language_from_extension(file_path):
@@ -211,7 +231,146 @@ def get_source_from_path(path):
         return 'Uploaded'
     return 'Unknown'
 
+def process_document(doc_path, base_path, results_queue):
+    full_path = os.path.normpath(doc_path)
+    if not os.path.exists(full_path):
+        print(f"Error: File not found {full_path}")
+        return
 
+    file_name = os.path.basename(full_path)
+    cleaned_path = clean_path(full_path, base_path)
+    language, file_type = get_language_from_extension(full_path)
+    source = get_source_from_path(full_path)
+
+    metadata = {
+        'filename': file_name,
+        'filepath': cleaned_path,
+        'language': language,
+        'source': source,
+        'type': file_type,
+        'translation': None
+    }
+
+    file_extension = os.path.splitext(full_path)[1].lower()
+    if file_extension == '.pdf':
+        try:
+            with open(full_path, 'rb') as f:
+                pdf_reader = PyPDF2.PdfReader(f)
+                pdf_text = []
+                for page_num in range(len(pdf_reader.pages)):
+                    page = pdf_reader.pages[page_num]
+                    pdf_text.append(page.extract_text())
+                content = ' '.join(pdf_text)
+        except Exception as e:
+            print(f"Error reading PDF file {full_path}: {e}")
+            return
+    else:
+        encoding = get_file_encoding(full_path) or 'utf-8'
+        try:
+            with open(full_path, 'r', encoding=encoding) as f:
+                content = f.read()
+        except Exception as e:
+            print(f"Error reading file {full_path}: {e}")
+            return
+
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=100, length_function=len)
+    chunks = text_splitter.split_text(content)
+
+    threads = []
+    for chunk in chunks:
+        thread = threading.Thread(target=process_chunk, args=(chunk, metadata, file_type, results_queue))
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+def process_chunk(chunk, metadata, file_type, results_queue):
+    doc_metadata = metadata.copy()
+    if file_type == 'Source Code':
+        translation, error = call_with_timeout_translation(get_chunk_classification, [chunk, metadata])
+        if error:
+            print(f"Error or timeout on first try translating. Retrying...")
+            translation, error = call_with_timeout_translation(get_chunk_classification, [chunk, metadata])
+            if error:
+                print(f"Error or timeout on second try translating. Using default behavior.")
+                print(f"Failed to translate a document for: {metadata['filename']}")
+                translation = None
+        
+        if translation:
+            doc_metadata['translation'] = chunk
+            chunk = translation
+
+    doc = Document(page_content=chunk, metadata=doc_metadata)
+    results_queue.put(doc)
+
+def batch_add_documents_to_collection(documents, collection, key):
+    # Prepare lists to store batch data
+    batch_documents = []
+    batch_embeddings = []
+    batch_metadatas = []
+    batch_ids = []
+
+    for document in documents:
+        doc_id = str(uuid.uuid4())
+
+        # Generate embedding for each document
+        embedding, error = call_with_timeout_embed(embed_text, [document.page_content, key])
+        if error:
+            print(f"Error or timeout on first try embedding {error}. Retrying...")
+            embedding, error = call_with_timeout_embed(embed_text, [document.page_content, key])
+            if error:
+                print(f"Error or timeout on second try embedding. Retrying...")
+                embedding, error = call_with_timeout_embed(embed_text, [document.page_content, key])
+                if error:
+                    print(f"Error or timeout on third try embedding. Skipping...")
+                    print(f"Unable to add document, failed embedding: {doc_id} | {document.metadata['filename']}")
+                    continue  # Skip this document if embedding fails
+
+        # Process metadata
+        document.metadata = stringify_dictionary(document.metadata)
+
+        # Append data to respective batches
+        batch_documents.append(document.page_content)
+        batch_embeddings.append(embedding)
+        batch_metadatas.append(document.metadata)
+        batch_ids.append(doc_id)
+
+    # Add the batch of documents to the collection
+    if batch_documents:
+        collection.add(
+            documents=batch_documents,
+            embeddings=batch_embeddings,
+            metadatas=batch_metadatas,
+            ids=batch_ids
+        )
+
+        # Optionally, print each added document
+        for doc_id, metadata in zip(batch_ids, batch_metadatas):
+            print(f"Added Document: {doc_id} | {metadata['filename']}")
+
+def batch_process_documents(results_queue, collection, key, batch_size=10):
+    batch_documents = []
+
+    while True:
+        try:
+            document = results_queue.get(timeout=5)  # Adjust timeout as needed
+            if document is None:  # Sentinel value to indicate completion
+                # Process any remaining documents in the batch
+                if batch_documents:
+                    batch_add_documents_to_collection(batch_documents, collection, key)
+                break
+
+            batch_documents.append(document)
+            if len(batch_documents) >= batch_size:
+                batch_add_documents_to_collection(batch_documents, collection, key)
+                batch_documents = []
+
+        except queue.Empty:
+            # If no items are in the queue, process any remaining documents in the batch
+            if batch_documents:
+                batch_add_documents_to_collection(batch_documents, collection, key)
+                batch_documents = []
 
 def store_documents(docs):
     base_path = "C:\\Users\\wbogu\\Temp\\"
@@ -224,99 +383,30 @@ def store_documents(docs):
                 docs.append(file_path)
 
     collection = get_working_collection()
+    results_queue = queue.Queue()
+    threads = []
+
+    key = get_openai_key()
+
+     # Start batch processing thread
+    batch_thread = threading.Thread(target=batch_process_documents, args=(results_queue, collection, key))
+    batch_thread.start()
 
     for doc_path in docs:
-        full_path = os.path.normpath(doc_path)
-        if not os.path.exists(full_path):
-            print(f"Error: File not found {full_path}")
-            continue
+        thread = threading.Thread(target=process_document, args=(doc_path, base_path, results_queue))
+        threads.append(thread)
+        thread.start()
 
-        file_name = os.path.basename(full_path)
-        cleaned_path = clean_path(full_path, base_path)
-        language, file_type = get_language_from_extension(full_path)
-        source = get_source_from_path(full_path)
+    # Wait for all threads to complete
+    for thread in threads:
+        thread.join()
 
-        metadata = {
-            'filename': file_name,
-            'filepath': cleaned_path,
-            'language': language,
-            'source': source,
-            'type': file_type,
-            'translation': None
-        }
-
-        file_extension = os.path.splitext(full_path)[1].lower()
-        if file_extension == '.pdf':
-            try:
-                with open(full_path, 'rb') as f:
-                    pdf_reader = PyPDF2.PdfReader(f)
-                    pdf_text = []
-                    for page_num in range(len(pdf_reader.pages)):
-                        page = pdf_reader.pages[page_num]
-                        pdf_text.append(page.extract_text())
-                    content = ' '.join(pdf_text)
-            except Exception as e:
-                print(f"Error reading PDF file {full_path}: {e}")
-                continue
-        else:
-            encoding = get_file_encoding(full_path) or 'utf-8'
-            try:
-                with open(full_path, 'r', encoding=encoding) as f:
-                    content = f.read()
-            except Exception as e:
-                print(f"Error reading file {full_path}: {e}")
-                continue
-
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=100, length_function=len)
-        chunks = text_splitter.split_text(content)
-        for chunk in chunks:
-            doc_metadata = metadata
-            if file_type == 'Source Code':
-                translation, error = call_with_timeout(get_chunk_classification, [chunk, metadata], 30)
-                if error:
-                    print(f"Error or timeout on first try translating: {error}. Retrying...")
-                    translation, error = call_with_timeout(get_chunk_classification, [chunk, metadata], 30)
-                    if error:
-                        print(f"Error or timeout on second try translating: {error}. Using default behavior.")
-                        print(f"Failed to translate a document for: {metadata['filename']}")
-                        translation = None
-                
-                if translation:
-                    doc_metadata = {
-                        **metadata,
-                        'translation': chunk
-                    }
-                    chunk = translation
-
-            doc = Document(page_content=chunk, metadata=doc_metadata)
-
-            # Add document to collection
-            add_document_to_collection(doc, collection)
+    # Signal the batch processing thread to finish
+    results_queue.put(None)
+    batch_thread.join()
 
     total_embeddings = collection.count()
     print(f"Collection now has {total_embeddings} embeddings!")
-
-
-def add_document_to_collection(document, collection):
-    doc_id = str(uuid.uuid4())
-
-    embedding, error = call_with_timeout(embed_text, [document.page_content], 30)
-    if error:
-        print(f"Error or timeout on first try embedding: {error}. Retrying...")
-        embedding, error = call_with_timeout(embed_text, [document.page_content], 30)
-        if error:
-            print(f"Error or timeout on second try embedding: {error}. Using default behavior.")
-            print(f"Unable to add document, failed embedding: {doc_id} | {document.metadata['filename']}")
-            translation = None
-
-    document.metadata = stringify_dictionary(document.metadata)
-    collection.add(
-        documents=[document.page_content],
-        embeddings=[embedding],
-        metadatas=[document.metadata],
-        ids=[doc_id]
-    )
-    print(f"Added Document: {doc_id} | {document.metadata['filename']}")
 
 # helper to clean up metadata
 def stringify_dictionary(input_dict):

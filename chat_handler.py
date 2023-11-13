@@ -1,23 +1,97 @@
 import openai
 import streamlit as st
-from utils import get_current_conversation, get_working_collection, get_cohere_client, call_with_timeout, create_meta_filter
+from utils import get_current_conversation, get_working_collection, get_cohere_client, create_meta_filter, get_openai_key
 import cohere
+import time
+import threading
+import os
+import requests
+import json
+from threading import Semaphore
 
-def embed_text(text):
-    openai.api_base = "https://api.openai.com/v1"
-    openai.api_key_path = "openai.txt"
+class ConcurrentCallLimiter:
+    def __init__(self, max_concurrent_calls):
+        self.semaphore = Semaphore(max_concurrent_calls)
+
+    def acquire(self):
+        self.semaphore.acquire()
+
+    def release(self):
+        self.semaphore.release()
+
+# Initialize the call limiter for 5 concurrent calls
+call_limiter_translation = ConcurrentCallLimiter(10)
+call_limiter_embedding = ConcurrentCallLimiter(30)
+
+def call_with_timeout_translation(func, args):
+    result = [None]
+    exception = [None]
+
+    def target():
+        try:
+            call_limiter_translation.acquire()
+            try:
+                result[0] = func(*args)
+            finally:
+                call_limiter_translation.release()
+        except Exception as e:
+            exception[0] = e
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    thread.join()
+    return result[0], exception[0]
+
+def call_with_timeout_embed(func, args):
+    result = [None]
+    exception = [None]
+
+    def target():
+        try:
+            call_limiter_embedding.acquire()
+            try:
+                result[0] = func(*args)
+            finally:
+                call_limiter_embedding.release()
+        except Exception as e:
+            exception[0] = e
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    thread.join()
+    return result[0], exception[0]
+
+def embed_text(text, key):
+    api_url = "https://api.openai.com/v1/embeddings"
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "input": text,
+        "model": "text-embedding-ada-002",
+        "encoding_format": "float"
+    }
+
     passed = False
-
     for j in range(5):
         try:
-            res = openai.Embedding.create(input=text, engine="text-embedding-ada-002")
-            passed = True
-        except openai.error.RateLimitError:
-            time.sleep(2**j)
+            response = requests.post(api_url, headers=headers, json=data)
+            if response.status_code == 200:
+                passed = True
+                break
+            elif response.status_code == 429:  # Rate limit error
+                time.sleep(2 ** j)
+            else:
+                break  # Break on other errors
+        except Exception as e:
+            print(f"Exception occurred: {e}")
+            break
+
     if not passed:
         raise RuntimeError("Failed to create embeddings.")
-    embedding = res['data'][0]['embedding']
-
+    
+    embedding = response.json()['data'][0]['embedding']
     return embedding
 
 def get_model_response(query, conversation):
@@ -37,7 +111,7 @@ def get_model_response(query, conversation):
 
     response = openai.ChatCompletion.create(
         #model = "",
-        model="openai/gpt-3.5-turbo-1106",
+        model="openai/gpt-4-1106-preview",
         messages=messages,
         headers={
             "HTTP-Referer": "http://bogusz.co",
@@ -60,23 +134,21 @@ def get_chunk_classification(query, metadata):
     openai.api_base = "https://openrouter.ai/api/v1"
     openai.api_key_path = "openrouter.txt"
 
-    augmented_prompt = f"""Translate the following code snippet into a user-friendly description. The description should be structured to facilitate keyword searches commonly used by someone trying to understand or locate specific functionalities within a codebase. Consider the following objectives:
+    template_file = "translation_template.txt"
+    
+    if os.path.exists(template_file):
+        with open(template_file, 'r') as file:
+            template = file.read()
+    else:
+        template = """Translate the following code snippet into a natural language.
+            Metadata:
+            {metadata}
 
-        1. Clearly identify and name each significant component (function, method, class) in the code and make direct reference to the filename and repository (source).
-        2. Explain the purpose and functionality of these components in simple terms.
-        3. Use common programming terminology that users might employ in their queries, such as "function", "method", "class", "return value", "parameter", "loop", etc.
-        4. Highlight any specific tasks or operations the code performs, which users might search for, like "sorting a list", "calculating a sum", "handling user input", etc.
-        5. Your translation should reflect the scale of the snippet, i.e. large snippets have more description, but a single line snippet evokes a single line translation
-        6. Explain how the operations might work together and describe the possible role or purpose of this snippet within a larger codebase.
+            Snippet:
+            {query}
+        """
 
-        Remember, the goal is to make the code snippet's functionality and role within a larger codebase easily discoverable through search queries. Do not comment on irrelevant features.
-
-        Metadata:
-        {metadata}
-
-        Snippet:
-        {query}
-    """
+    augmented_prompt = template.format(metadata=metadata, query=query)
 
     messages = [
         {"role": "system", "content": "You are a virtual knowledge agent who is provided snippets of data from various files. You attempt to fulfill queries based on provided context."},
@@ -102,10 +174,12 @@ def get_chunk_classification(query, metadata):
 def inject_context(query):
     collection = get_working_collection()
 
-    vector, error = call_with_timeout(embed_text, [query], 30)
+    key = get_openai_key()
+
+    vector, error = call_with_timeout_embed(embed_text, [query, key])
     if error:
         print(f"Error or timeout on first try embedding: {error}. Retrying...")
-        vector, error = call_with_timeout(embed_text, [query], 30)
+        vector, error = call_with_timeout_embed(embed_text, [query, key])
         if error:
             print(f"Error or timeout on second try embedding query: {error}.")
             raise Exception("Unable to vectorize query, failed embedding")
@@ -113,7 +187,6 @@ def inject_context(query):
     selected_files_context = st.session_state.get('selected_context_files', [])
     if selected_files_context:
         meta_filter = create_meta_filter(selected_files_context)
-        print(meta_filter)
         results = collection.query(
             query_embeddings=vector,
             n_results=200,
