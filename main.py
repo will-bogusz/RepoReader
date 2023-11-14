@@ -87,14 +87,14 @@ def main():
 
     if embed_documents_btn:
         if selected_files:
-            #store_documents(selected_files)
-            st.error("Disabling in demo to prevent user error! Sorry!")
+            store_documents(selected_files)
+            #st.error("Disabling in demo to prevent user error! Sorry!")
         else:
-            st.error("Disabling in demo to prevent user error! Sorry!")
-            #total_cost, file_count = calculate_cost_from_selection(selected_files, base)
-            #if total_cost is not None and file_count > 0:
-            #    st.session_state['confirm_embed_all'] = True
-            #    st.success(f"Total cost to embed all {file_count} documents: ~${total_cost:.3f}")
+            #st.error("Disabling in demo to prevent user error! Sorry!")
+            total_cost, file_count = calculate_cost_from_selection(selected_files, base)
+            if total_cost is not None and file_count > 0:
+                st.session_state['confirm_embed_all'] = True
+                st.success(f"Total cost to embed all {file_count} documents: ~${total_cost:.3f}")
 
     if 'confirm_embed_all' in st.session_state and st.session_state['confirm_embed_all']:
         if st.button("Confirm"):
