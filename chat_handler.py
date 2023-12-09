@@ -111,11 +111,12 @@ def get_model_response(query, conversation):
 
     response = openai.ChatCompletion.create(
         #model = "",
-        model="openai/gpt-4-1106-preview",
+        model="openai/gpt-3.5-turbo-1106",
         messages=messages,
         headers={
             "HTTP-Referer": "http://bogusz.co",
         },
+        stream=True,
     )
 
     response_content = response.choices[0].message
@@ -238,14 +239,23 @@ def inject_context(query):
     return structured_context
 
 def begin_conversation():
-    user_question = st.text_input('Ask a question about your uploaded data:')
+    user_question = st.text_input('Ask a question about your uploaded data:', key="user_input")
 
-    # will want to find a better way to display the conversation with a history
     if user_question:
         query = inject_context(user_question)
-        # disabling conversational features for now, making them one off replies based on provided context
-        response = get_model_response(query, False)
+        message_placeholder = st.empty()
 
-        conversation = get_current_conversation()
+        if "conversation" not in st.session_state:
+            st.session_state.conversation = []
 
-        st.write(conversation)
+        st.session_state.conversation.append({"role": "user", "content": user_question})
+
+        # Display user's question in markdown format
+        with st.container():
+            st.markdown(f"**You**: {user_question}")
+
+        for partial_response in get_model_response(query, False):
+            st.session_state.conversation[-1] = {"role": "assistant", "content": partial_response}
+            # Update the UI for each part of the response in markdown format
+            message_placeholder.markdown(f"**Assistant**: {partial_response}", unsafe_allow_html=True)
+

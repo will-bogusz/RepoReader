@@ -31,13 +31,13 @@ def get_selected_files():
     for key, value in st.session_state.items():
         if value and "file:" in key:
             file_path = key.split("file:", 1)[1]
-            file_path = "C:\\Users\\wbogu\\Temp\\" + file_path
+            file_path = "/home/will/hosting/RepoReader/Documents/" + file_path
             selected_files.append(file_path)
     return selected_files
 
 
 def directory_explorer_app(target_state='selected_files'):
-    directory_tree = traverse_directories("C:\\Users\\wbogu\\Temp")
+    directory_tree = traverse_directories("/home/will/hosting/RepoReader/Documents")
     render_tree(directory_tree)
     
     if st.button("Done"):

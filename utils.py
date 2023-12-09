@@ -80,7 +80,7 @@ def call_with_timeout(func, args, timeout):
     return result[0], exception[0]
 
 def create_meta_filter(paths):
-    base_path = "C:\\Users\\wbogu\\Temp\\"
+    base_path = "/home/will/hosting/RepoReader/Documents/"
     length = len(base_path)
     
     if len(paths) == 1:
