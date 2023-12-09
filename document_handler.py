@@ -382,7 +382,7 @@ def batch_process_documents(results_queue, collection, key, batch_size=10):
                 batch_documents = []
 
 def store_documents(docs):
-    base_path = "C:\\Users\\wbogu\\Temp\\"
+    base_path = "/home/will/hosting/RepoReader/Documents/"
 
     if not docs:
         # Traverse the directories and subdirectories to get all file paths

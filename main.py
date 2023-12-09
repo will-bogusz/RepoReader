@@ -107,7 +107,6 @@ def main():
 
     if not st.session_state.get('explore_directory', False):
         show_github_ingestion = st.checkbox('Show Repository Loader')
-        show_conversation_box = st.checkbox('Show Conversation Box')
         show_new_document_loader = st.checkbox('Show Document Uploader')
 
         if show_github_ingestion:

@@ -111,25 +111,16 @@ def get_model_response(query, conversation):
 
     response = openai.ChatCompletion.create(
         #model = "",
-        model="openai/gpt-3.5-turbo-1106",
+        model="openai/gpt-4-1106-preview",
         messages=messages,
         headers={
-            "HTTP-Referer": "http://bogusz.co",
+            "HTTP-Referer": "http://codebase.bogusz.co",
         },
         stream=True,
     )
-
-    response_content = response.choices[0].message
-
-    messages.append(response_content)
-
-    if not conversation:
-        st.session_state.current_conversation = messages
-
-    openai.api_base = "https://api.openai.com/v1"
-    openai.api_key_path = "openai.txt"
-
-    return response_content["content"]
+    
+    for chunk in response:
+        yield chunk
 
 def get_chunk_classification(query, metadata):
     openai.api_base = "https://openrouter.ai/api/v1"
@@ -161,7 +152,7 @@ def get_chunk_classification(query, metadata):
         model="openai/gpt-3.5-turbo-1106",
         messages=messages,
         headers={
-            "HTTP-Referer": "http://bogusz.co",
+            "HTTP-Referer": "http://codebase.bogusz.co",
         },
     )
 
@@ -239,23 +230,25 @@ def inject_context(query):
     return structured_context
 
 def begin_conversation():
-    user_question = st.text_input('Ask a question about your uploaded data:', key="user_input")
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-    if user_question:
-        query = inject_context(user_question)
-        message_placeholder = st.empty()
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-        if "conversation" not in st.session_state:
-            st.session_state.conversation = []
+    if prompt := st.chat_input("Ask your question"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-        st.session_state.conversation.append({"role": "user", "content": user_question})
+        query = inject_context(prompt)
 
-        # Display user's question in markdown format
-        with st.container():
-            st.markdown(f"**You**: {user_question}")
-
-        for partial_response in get_model_response(query, False):
-            st.session_state.conversation[-1] = {"role": "assistant", "content": partial_response}
-            # Update the UI for each part of the response in markdown format
-            message_placeholder.markdown(f"**Assistant**: {partial_response}", unsafe_allow_html=True)
-
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = ""
+            for partial_response in get_model_response(query, False):
+                full_response += (partial_response.choices[0].delta["content"] or "")
+                message_placeholder.markdown(full_response + "▌")
+            message_placeholder.markdown(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
