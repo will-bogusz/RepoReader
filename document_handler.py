@@ -44,6 +44,15 @@ def is_text_file(file_path):
         return True
     except UnicodeDecodeError:
         return False
+    
+def remove_with_sudo(path):
+    try:
+        subprocess.run(['sudo', 'rm', '-rf', path], check=True)
+        print(f"Successfully removed {path}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error removing {path}: {e}")
+    except Exception as e:
+        print(f"Unexpected error: {e}")
 
 def clean_cloned_directory(directory_path):
     for root, dirs, files in os.walk(directory_path):
@@ -56,7 +65,7 @@ def clean_cloned_directory(directory_path):
                 os.remove(file_path)
 
 def clone_repo(git_url):
-    local_path = "C:/Users/wbogu/Temp/Repositories"
+    local_path = "/home/will/hosting/RepoReader/Documents/Repositories"
     repo_name = git_url.strip('/').rstrip('.git').split('/')[-1]
     full_local_path = os.path.normpath(os.path.join(local_path, repo_name))
 
@@ -79,11 +88,11 @@ def clone_repo(git_url):
         github_dir = os.path.normpath(os.path.join(full_local_path, '.github'))
 
         if os.path.exists(git_dir):
-            shutil.rmtree(git_dir)
+            remove_with_sudo(git_dir)
         if os.path.exists(github_dir):
-            shutil.rmtree(github_dir)
+            remove_with_sudo(github_dir)
         if os.path.exists(gitignore_file):
-            os.remove(gitignore_file)
+            remove_with_sudo(gitignore_file)
 
         time.sleep(1)
         clean_cloned_directory(full_local_path)
@@ -373,7 +382,7 @@ def batch_process_documents(results_queue, collection, key, batch_size=10):
                 batch_documents = []
 
 def store_documents(docs):
-    base_path = "C:\\Users\\wbogu\\Temp\\"
+    base_path = "/home/will/hosting/RepoReader/Documents/"
 
     if not docs:
         # Traverse the directories and subdirectories to get all file paths
@@ -414,7 +423,7 @@ def stringify_dictionary(input_dict):
 
 def upload_documents():
     valid_data_documents = ["doc", "txt", "md", "pdf", "log", "py", "js"]
-    base_path = "C:\\Users\\wbogu\\Temp\\Uploaded"
+    base_path = "/home/will/hosting/RepoReader/Documents/Uploaded"
 
     document = st.file_uploader("Upload your data", type=valid_data_documents)
     if document is not None:

@@ -28,7 +28,7 @@ def get_working_collection():
     if 'working_collection' not in st.session_state or st.session_state.working_collection is None:
         client = get_chroma_connection()
         ef = get_embedding_function()
-        st.session_state.working_collection = client.get_or_create_collection(name="reporeader2", embedding_function=ef)
+        st.session_state.working_collection = client.get_or_create_collection(name="reporeader3", embedding_function=ef)
     return st.session_state.working_collection
 
 def get_cohere_client():
@@ -80,7 +80,7 @@ def call_with_timeout(func, args, timeout):
     return result[0], exception[0]
 
 def create_meta_filter(paths):
-    base_path = "C:\\Users\\wbogu\\Temp\\"
+    base_path = "/home/will/hosting/RepoReader/Documents/"
     length = len(base_path)
     
     if len(paths) == 1:

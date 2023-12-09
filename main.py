@@ -17,7 +17,7 @@ from utils import get_working_collection
 def format_file_hierarchy(selected_files):
     file_hierarchy = {}
     for file_path in selected_files:
-        file_path = file_path[len("C:\\Users\\wbogu\\Temp\\"):]
+        file_path = file_path[len("/home/will/hosting/RepoReader/Documents/"):]
         parts = file_path.split(os.sep)
         repo_name = parts[0]
         sub_path = os.sep.join(parts[1:-1])
@@ -49,8 +49,8 @@ def display_selected_files(selected_files, title):
         st.sidebar.write(f"No files currently selected for {title.lower()}")
 
 def main():
-    st.set_page_config(page_title="Ask your Codebase")
-    st.header("Ask your Codebase")
+    st.set_page_config(page_title="Repo Reader")
+    st.header("Repo Reader")
 
     selected_files_embedding = st.session_state.get('selected_files', [])
     display_selected_files(selected_files_embedding, "Selected For Embedding")
@@ -73,7 +73,7 @@ def main():
         st.session_state['explore_directory'] = True
         st.session_state['directory_target'] = 'selected_context_files'
 
-    base = "C:\\Users\\wbogu\\Temp\\"
+    base = "/home/will/hosting/RepoReader/Documents/"
     selected_files = st.session_state.get('selected_files', [])
 
     if calculate_cost_btn:
@@ -107,7 +107,6 @@ def main():
 
     if not st.session_state.get('explore_directory', False):
         show_github_ingestion = st.checkbox('Show Repository Loader')
-        show_conversation_box = st.checkbox('Show Conversation Box')
         show_new_document_loader = st.checkbox('Show Document Uploader')
 
         if show_github_ingestion:
@@ -116,8 +115,7 @@ def main():
         if show_new_document_loader:
             upload_documents()
 
-        if show_conversation_box:
-            begin_conversation()
+        begin_conversation()
 
     if 'explore_directory' in st.session_state and st.session_state['explore_directory']:
         directory_target = st.session_state.get('directory_target', 'selected_files')

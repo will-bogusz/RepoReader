@@ -2,4 +2,6 @@ openai.txt
 openrouter.txt
 cohere.txt
 translation_template.txt
+Documents/
 __pycache__/
+reporeader/
