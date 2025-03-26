@@ -2,9 +2,9 @@
 
 Created as a submission for the 2023 VT E-Club Startup Sprint - Made from start -> finish in 4 days
 
-Check out the quick tutorial to use it live at https://codebase.bogusz.co :
+Check out the quick tutorial on how it works: https://youtu.be/n1GBjq30vQo
 
-https://youtu.be/n1GBjq30vQo
+**UPDATE**: This project was developed and released prior to Cursor and Github Copilot's codebase search feature realeases. Codebase embedding and retrieval has since become an officially integrated feature in all leading AI-first IDEs
 
 ## Overview
 
